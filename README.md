@@ -24,7 +24,7 @@ Note
 
 Once the php container has finished, you can go to `localhost:8080` on your host, and you should see a successful connection to the database. If you wait 60seconds, and refresh, you should see that it has revoked you user access.
 
-Note
+References
 ---------------------
 
 This project used content from the following github repository
