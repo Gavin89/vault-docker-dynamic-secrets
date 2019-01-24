@@ -1,0 +1,76 @@
+version: '3'
+services:
+  vault:
+    image: vault
+    command: server -dev
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: f420103a-e656-33f2-6834-0dd2d4cd4f35
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+  vault-client:
+    image: vault
+    command:
+      - /bin/sh
+      - -c
+      - |
+        while ! $$(vault status &> /dev/null); do echo "Trying to connect to vault"; sleep 2; done
+        sleep 40
+        vault login $${VAULT_DEV_ROOT_TOKEN_ID}
+        vault auth enable approle
+        vault policy write dbwebapp /policies/dbwebapp-policy.hcl
+        vault write auth/approle/role/dbwebapp policies="dbwebapp" bound_cidr_list=0.0.0.0/0 bind_secret_id=false role_id=$${ROLE_ID}
+        vault secrets enable database
+        vault write database/config/dbwebapp \
+            plugin_name=mysql-aurora-database-plugin \
+            connection_url="root:root@tcp(mysql:3306)/" \
+            allowed_roles="vault-mysql-role" \
+            username="root" \
+            password="root"
+        vault write database/roles/vault-mysql-role \
+            db_name=dbwebapp \
+            creation_statements="CREATE USER '{{name}}'@'%' IDENTIFIED BY '{{password}}';GRANT SELECT ON *.* TO '{{name}}'@'%';" \
+            default_ttl="1m" \
+            max_ttl="24h"
+    volumes:
+        - ./policies/:/policies/
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: "f420103a-e656-33f2-6834-0dd2d4cd4f35"
+      VAULT_ADDR: "http://vault:8200"
+      DBUSER: "svc_vault"
+      DBPASS: "vault"
+      ROLE_ID: "1234"
+    depends_on:
+      - mysql
+  mysql:
+    image: mysql:5.6
+    volumes:
+        - ./docker-entrypoint-initdb.d/:/docker-entrypoint-initdb.d/
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+  web:
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    ports:
+      - "8080:80"
+    volumes:
+      - .:/code/
+    depends_on:
+      - php
+
+  php:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    volumes:
+      - .:/code/
+    depends_on:
+      - vault
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://vault:8200/ui/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
